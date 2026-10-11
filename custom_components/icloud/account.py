@@ -1,12 +1,13 @@
 """iCloud account."""
 
 from datetime import timedelta
+from importlib.metadata import PackageNotFoundError, version
 import logging
 import operator
 from typing import Any
 
-from pyicloud import PyiCloudService
 from pyicloud.exceptions import (
+    PyiCloudAuthRequiredException,
     PyiCloudFailedLoginException,
     PyiCloudNoDevicesException,
     PyiCloudServiceNotActivatedException,
@@ -54,8 +55,19 @@ from .const import (
     DEVICE_STATUS_SET,
     DOMAIN,
 )
+from .pyicloud_service import (
+    IcloudAppleAccountLockedError,
+    IcloudFindMyAuthRequiredError,
+    IcloudPyiCloudService,
+    is_apple_account_locked,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+try:
+    _PYICLOUD_VERSION = version("pyicloud")
+except PackageNotFoundError:
+    _PYICLOUD_VERSION = "unknown"
 
 type IcloudConfigEntry = ConfigEntry[IcloudAccount]
 
@@ -85,30 +97,58 @@ class IcloudAccount:
 
         self._icloud_dir = icloud_dir
 
-        self.api: PyiCloudService | None = None
+        self.api: IcloudPyiCloudService | None = None
         self._owner_fullname: str | None = None
         self._family_members_fullname: dict[str, str] = {}
         self._devices: dict[str, IcloudDevice] = {}
         self._retried_fetch = False
         self._config_entry = config_entry
+        self.startup_issue: str | None = None
 
         self.listeners: list[CALLBACK_TYPE] = []
 
     def setup(self) -> None:
         """Set up an iCloud account."""
         try:
-            self.api = PyiCloudService(
+            self.api = IcloudPyiCloudService(
                 self._username,
                 self._password,
                 self._icloud_dir.path,
                 with_family=self._with_family,
+                # Startup must not silently switch from a rejected cached
+                # session to an account-wide password/SRP login. Let the user
+                # explicitly complete reauthentication instead.
+                suppress_srp_fallback_on_cached_hsa2=True,
                 # Auto-accept updated Apple terms of service. Newer pyicloud
                 # versions otherwise raise PyiCloudAcceptTermsException on login.
                 accept_terms=True,
             )
 
-        except PyiCloudFailedLoginException:
+        except IcloudAppleAccountLockedError:
             self.api = None
+            self.startup_issue = "apple_account_locked"
+            _LOGGER.error(
+                "Apple reported that this iCloud account is locked; "
+                "automatic authentication will not be retried"
+            )
+            return
+        except IcloudFindMyAuthRequiredError:
+            self.api = None
+            self.startup_issue = "session_requires_reauth"
+            _LOGGER.warning(
+                "Apple requires additional authentication for the cached "
+                "iCloud session; automatic password fallback was suppressed"
+            )
+            return
+        except PyiCloudFailedLoginException as error:
+            self.api = None
+            if is_apple_account_locked(error):
+                self.startup_issue = "apple_account_locked"
+                _LOGGER.error(
+                    "Apple reported that this iCloud account is locked; "
+                    "automatic authentication will not be retried"
+                )
+                return
             # Login failed which means credentials need to be updated.
             _LOGGER.error(
                 (
@@ -122,6 +162,15 @@ class IcloudAccount:
             self._require_reauth()
             return
 
+        _LOGGER.info(
+            "iCloud startup session state (pyicloud=%s): trusted=%s, "
+            "requires_2fa=%s, requires_2sa=%s",
+            _PYICLOUD_VERSION,
+            self.api.is_trusted_session,
+            self.api.requires_2fa,
+            self.api.requires_2sa,
+        )
+
         if self.api.requires_2fa:
             # Apple did not accept this session as trusted. This is distinct
             # from a rejected password, even though both paths need reauth.
@@ -130,16 +179,60 @@ class IcloudAccount:
                     "Apple is requiring two-factor authentication for the "
                     "iCloud session. A saved session can still be expired or "
                     "untrusted; this does not necessarily mean the password "
-                    "is wrong. Reauthenticate the Apple iCloud integration."
-                )
+                    "is wrong. Reauthenticate the Apple iCloud integration. "
+                    "(pyicloud=%s, trusted=%s, requires_2fa=%s, requires_2sa=%s)."
+                ),
+                _PYICLOUD_VERSION,
+                self.api.is_trusted_session,
+                self.api.requires_2fa,
+                self.api.requires_2sa,
             )
             self.api = None
             self._require_reauth()
             return
 
+        auth_state_before_device_fetch = (
+            self.api.is_trusted_session,
+            self.api.requires_2fa,
+            self.api.requires_2sa,
+        )
+
         try:
             # Gets device owners infos
             user_info = self.api.devices.user_info
+        except IcloudAppleAccountLockedError:
+            self.api = None
+            self.startup_issue = "apple_account_locked"
+            _LOGGER.error(
+                "Apple reported that this iCloud account is locked; "
+                "automatic authentication will not be retried"
+            )
+            return
+        except (IcloudFindMyAuthRequiredError, PyiCloudAuthRequiredException) as err:
+            _LOGGER.warning(
+                "Find My authentication requires a user-driven "
+                "reauthentication (%s); automatic fallback was suppressed",
+                type(err).__name__,
+            )
+            self.api = None
+            self.startup_issue = "session_requires_reauth"
+            return
+        except PyiCloudFailedLoginException as err:
+            self.api = None
+            if is_apple_account_locked(err):
+                self.startup_issue = "apple_account_locked"
+                _LOGGER.error(
+                    "Apple reported that this iCloud account is locked; "
+                    "automatic authentication will not be retried"
+                )
+            else:
+                self.startup_issue = "session_requires_reauth"
+                _LOGGER.warning(
+                    "Find My login failed after the cached session check "
+                    "(error=%s); user-driven reauthentication is required",
+                    type(err).__name__,
+                )
+            return
         except (
             PyiCloudServiceNotActivatedException,
             PyiCloudNoDevicesException,
@@ -150,6 +243,20 @@ class IcloudAccount:
 
         if user_info is None:
             raise ConfigEntryNotReady("No user info found in iCloud devices response")
+
+        if self.api.requires_2fa:
+            _LOGGER.warning(
+                "Apple requires two-factor authentication after initializing "
+                "iCloud Find My devices (pyicloud=%s, before trusted=%s/2fa=%s/2sa=%s, "
+                "after trusted=%s/2fa=%s/2sa=%s); starting reauthentication",
+                _PYICLOUD_VERSION,
+                *auth_state_before_device_fetch,
+                self.api.is_trusted_session,
+                self.api.requires_2fa,
+                self.api.requires_2sa,
+            )
+            self._require_reauth()
+            return
 
         self._owner_fullname = (
             f"{user_info.get('firstName')} {user_info.get('lastName')}"
@@ -172,14 +279,31 @@ class IcloudAccount:
         _LOGGER.debug("Updating devices")
 
         if self.api.requires_2fa:
+            _LOGGER.warning(
+                "Apple requires two-factor authentication while refreshing "
+                "iCloud devices (pyicloud=%s, trusted=%s, requires_2fa=%s, "
+                "requires_2sa=%s); starting reauthentication",
+                _PYICLOUD_VERSION,
+                self.api.is_trusted_session,
+                self.api.requires_2fa,
+                self.api.requires_2sa,
+            )
             self._require_reauth()
             return
 
         api_devices = {}
         try:
-            api_devices = self.api.devices
+            api_devices = list(self.api.devices)
+        except (IcloudFindMyAuthRequiredError, PyiCloudAuthRequiredException) as err:
+            _LOGGER.warning(
+                "Apple Find My authentication is required while refreshing "
+                "devices (%s); starting reauthentication",
+                type(err).__name__,
+            )
+            self._require_reauth()
+            return
         except Exception as err:  # noqa: BLE001
-            _LOGGER.error("Unknown iCloud error: %s", err)
+            _LOGGER.error("Unknown iCloud error (error=%s)", type(err).__name__)
             self._fetch_interval = 2
             dispatcher_send(self.hass, self.signal_device_update)
             self._schedule_next_fetch()
@@ -214,7 +338,8 @@ class IcloudAccount:
                 new_device = True
 
         if (
-            DEVICE_STATUS_CODES.get(list(api_devices)[0][DEVICE_STATUS]) == "pending"
+            api_devices
+            and DEVICE_STATUS_CODES.get(api_devices[0][DEVICE_STATUS]) == "pending"
             and not self._retried_fetch
         ):
             _LOGGER.debug("Pending devices, trying again in 15s")

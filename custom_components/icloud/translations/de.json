@@ -1,14 +1,22 @@
 {
     "config": {
         "abort": {
+            "apple_account_locked": "Apple hat diesen Apple Account aus Sicherheitsgründen gesperrt. Entsperre ihn unter iforgot.apple.com, bevor du es erneut versuchst.",
             "already_configured": "Konto ist bereits konfiguriert",
+            "find_my_auth_required": "Apple verlangt für „Wo ist?“ weiterhin eine Authentifizierung, obwohl die iCloud-Sitzung geprüft wurde.",
             "no_device": "Bei keinem deiner Geräte ist „Wo ist?“ aktiviert",
-            "reauth_successful": "Die erneute Authentifizierung war erfolgreich"
+            "reauth_successful": "Die erneute Authentifizierung war erfolgreich",
+            "reauth_setup_failed": "Apple hat die Bestätigung abgeschlossen, aber Home Assistant konnte die iCloud-Integration nicht laden. Prüfe den Einrichtungsfehler in Home Assistant, bevor du es erneut versuchst.",
+            "session_check_failed": "Die iCloud-Sitzung konnte bei Apple nicht bestätigt werden. Bitte erneut versuchen.",
+            "session_not_trusted": "Apple hat keine vertrauenswürdige iCloud-Sitzung eingerichtet. Bitte die Einrichtung erneut starten."
         },
         "error": {
+            "apple_account_locked": "Apple hat diesen Apple Account aus Sicherheitsgründen gesperrt. Entsperre ihn unter iforgot.apple.com, bevor du es erneut versuchst.",
             "invalid_auth": "Ungültige Authentifizierung",
             "send_verification_code": "Bestätigungscode konnte nicht gesendet werden",
-            "validate_verification_code": "Dein Bestätigungscode konnte nicht überprüft werden, versuche es erneut"
+            "validate_verification_code": "Dein Bestätigungscode konnte nicht überprüft werden, versuche es erneut",
+            "session_not_trusted": "Apple hat den Code akzeptiert, aber keine vertrauenswürdige Sitzung eingerichtet. Ein neuer Bestätigungscode ist erforderlich.",
+            "session_requires_2sa": "Apple verlangt weiterhin eine Bestätigung über ein vertrauenswürdiges Gerät."
         },
         "step": {
             "reauth_confirm": {
@@ -16,7 +24,7 @@
                     "password": "Hauptpasswort (MFA)",
                     "username": "E-Mail"
                 },
-                "description": "Dein zuvor eingegebenes Passwort für {username} funktioniert nicht mehr. Aktualisiere dein Passwort, um diese Integration weiter zu nutzen.",
+                "description": "Apple verlangt eine erneute Anmeldung für {username}. Schließe die Bestätigung ab, um diese Integration weiter zu nutzen. Falls Apple den Account gesperrt hat, entsperre ihn zuerst bei Apple.",
                 "title": "Authentifizierung für {name} abgelaufen"
             },
             "trusted_device": {
@@ -42,6 +50,24 @@
                 "description": "Bitte gib den Bestätigungscode ein, den du gerade von Apple erhalten hast",
                 "title": "Apple-Account-Code"
             }
+        }
+    },
+    "exceptions": {
+        "apple_account_locked": {
+            "message": "Apple hat diesen Apple Account aus Sicherheitsgründen gesperrt. Entsperre ihn unter iforgot.apple.com, bevor du es erneut versuchst. Home Assistant wiederholt die Authentifizierung nicht automatisch."
+        },
+        "session_requires_reauth": {
+            "message": "Apple verlangt eine zusätzliche Bestätigung für die gespeicherte iCloud-Sitzung. Konfiguriere Apple iCloud neu und schließe die Bestätigung ab. Home Assistant wechselt nach dieser Sitzungssperre nicht automatisch zu einer Passwortanmeldung."
+        }
+    },
+    "issues": {
+        "apple_account_locked": {
+            "title": "Apple Account gesperrt",
+            "description": "Apple hat den Account aus Sicherheitsgründen gesperrt. Entsperre ihn unter [iforgot.apple.com](https://iforgot.apple.com) und konfiguriere anschließend Apple iCloud in Home Assistant neu. Es wird nicht automatisch erneut versucht, sich anzumelden."
+        },
+        "session_requires_reauth": {
+            "title": "Apple-iCloud-Sitzung muss bestätigt werden",
+            "description": "Apple hat die gespeicherte Sitzung nicht als vertrauenswürdig akzeptiert. Konfiguriere Apple iCloud neu und schließe die Bestätigung ab. Home Assistant wechselt nach dieser Sitzungssperre nicht automatisch zu einer Passwortanmeldung."
         }
     },
     "services": {

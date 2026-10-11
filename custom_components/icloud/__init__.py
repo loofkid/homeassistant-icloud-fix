@@ -4,7 +4,9 @@ from typing import Any
 
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
@@ -57,6 +59,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: IcloudConfigEntry) -> bo
         entry,
     )
     await hass.async_add_executor_job(account.setup)
+
+    issue_ids = {
+        issue_key: f"{issue_key}_{entry.entry_id}"
+        for issue_key in ("apple_account_locked", "session_requires_reauth")
+    }
+    if account.startup_issue is not None:
+        issue_key = account.startup_issue
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            issue_ids[issue_key],
+            is_fixable=False,
+            is_persistent=True,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key=issue_key,
+        )
+        if issue_key == "session_requires_reauth":
+            # This is recoverable through the existing password/MFA flow. Let
+            # Home Assistant start reauth instead of leaving the entry in a
+            # terminal setup_error state.
+            raise ConfigEntryAuthFailed(
+                translation_domain=DOMAIN,
+                translation_key=issue_key,
+            )
+        raise ConfigEntryError(
+            translation_domain=DOMAIN,
+            translation_key=issue_key,
+        )
+
+    for issue_id in issue_ids.values():
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
 
     entry.runtime_data = account
 

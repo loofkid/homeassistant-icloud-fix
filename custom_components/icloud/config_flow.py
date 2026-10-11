@@ -6,8 +6,8 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-from pyicloud import PyiCloudService
 from pyicloud.exceptions import (
+    PyiCloudAuthRequiredException,
     PyiCloudException,
     PyiCloudFailedLoginException,
     PyiCloudNoDevicesException,
@@ -29,6 +29,12 @@ from .const import (
     DOMAIN,
     STORAGE_KEY,
     STORAGE_VERSION,
+)
+from .pyicloud_service import (
+    IcloudAppleAccountLockedError,
+    IcloudFindMyAuthRequiredError,
+    IcloudPyiCloudService,
+    is_apple_account_locked,
 )
 
 CONF_TRUSTED_DEVICE = "trusted_device"
@@ -94,14 +100,14 @@ class IcloudFlowHandler(ConfigFlow, domain=DOMAIN):
             description_placeholders=self._description_placeholders,
         )
 
-    async def _create_icloud_api(self) -> PyiCloudService:
+    async def _create_icloud_api(self) -> IcloudPyiCloudService:
         """Create a pyicloud API object in the executor."""
         # accept_terms=True auto-accepts updated Apple terms of service. Newer
         # pyicloud versions otherwise raise PyiCloudAcceptTermsException during
         # login, and a config flow has no way to display the terms interactively.
         return await self.hass.async_add_executor_job(
             partial(
-                PyiCloudService,
+                IcloudPyiCloudService,
                 self._username,
                 self._password,
                 cookie_directory=Store(self.hass, STORAGE_VERSION, STORAGE_KEY).path,
@@ -141,12 +147,17 @@ class IcloudFlowHandler(ConfigFlow, domain=DOMAIN):
         try:
             result = await self.hass.async_add_executor_job(request_2fa_code)
         except PyiCloudException as error:
-            _LOGGER.error("Failed to request iCloud 2FA verification code: %s", error)
+            _LOGGER.error(
+                "Failed to request iCloud 2FA verification code (error=%s)",
+                type(error).__name__,
+            )
             errors["base"] = "send_verification_code"
             return errors
-        except Exception:
-            _LOGGER.exception(
-                "Unexpected error requesting iCloud 2FA verification code"
+        except Exception as error:
+            _LOGGER.error(
+                "Unexpected error requesting iCloud 2FA verification code "
+                "(error=%s)",
+                type(error).__name__,
             )
             errors["base"] = "send_verification_code"
             return errors
@@ -185,8 +196,23 @@ class IcloudFlowHandler(ConfigFlow, domain=DOMAIN):
 
         try:
             self.api = await self._create_icloud_api()
+        except IcloudAppleAccountLockedError:
+            _LOGGER.error("Apple reported that the iCloud account is locked")
+            self.api = None
+            return self._show_setup_form(
+                user_input, {"base": "apple_account_locked"}, step_id
+            )
         except PyiCloudFailedLoginException as error:
-            _LOGGER.error("Error logging into iCloud service: %s", error)
+            if is_apple_account_locked(error):
+                _LOGGER.error("Apple reported that the iCloud account is locked")
+                self.api = None
+                return self._show_setup_form(
+                    user_input, {"base": "apple_account_locked"}, step_id
+                )
+            _LOGGER.error(
+                "Error logging into iCloud service (error=%s)",
+                type(error).__name__,
+            )
             self.api = None
             errors = {CONF_PASSWORD: "invalid_auth"}
             return self._show_setup_form(user_input, errors, step_id)
@@ -198,6 +224,67 @@ class IcloudFlowHandler(ConfigFlow, domain=DOMAIN):
         if self.api.requires_2sa:
             return await self.async_step_trusted_device()
 
+        return await self._finish_authenticated_entry()
+
+    async def _ensure_trusted_session(self, stage: str) -> ConfigFlowResult | None:
+        """Confirm Apple reports a valid, trusted session before continuing."""
+        if TYPE_CHECKING:
+            assert self.api is not None
+
+        try:
+            status = await self.hass.async_add_executor_job(self.api.get_auth_status)
+        except Exception as error:
+            _LOGGER.warning(
+                "Could not verify iCloud authentication after %s (error=%s)",
+                stage,
+                type(error).__name__,
+            )
+            return self.async_abort(reason="session_check_failed")
+
+        if (
+            status.get("authenticated")
+            and status.get("trusted_session")
+            and not status.get("requires_2fa")
+            and not status.get("requires_2sa")
+        ):
+            return None
+
+        _LOGGER.warning(
+            "Apple session is not ready after %s (authenticated=%s, trusted=%s, "
+            "requires_2fa=%s, requires_2sa=%s)",
+            stage,
+            status.get("authenticated"),
+            status.get("trusted_session"),
+            status.get("requires_2fa"),
+            status.get("requires_2sa"),
+        )
+
+        errors = {"base": "session_not_trusted"}
+        if status.get("requires_2fa"):
+            # The previous code may have been accepted without trust being
+            # established. Request a fresh code rather than mislabeling it as
+            # an invalid password or silently creating a non-persistent entry.
+            self._2fa_code_requested = False
+            return await self.async_step_verification_code(
+                None, errors, request_code=True
+            )
+        if status.get("requires_2sa"):
+            return await self.async_step_trusted_device(
+                errors={"base": "session_requires_2sa"}
+            )
+
+        return self.async_abort(reason="session_not_trusted")
+
+    async def _finish_authenticated_entry(self) -> ConfigFlowResult:
+        """Validate the trusted session, initialize Find My, then save it."""
+        if TYPE_CHECKING:
+            assert self.api is not None
+
+        auth_result = await self._ensure_trusted_session("before Find My")
+        if auth_result is not None:
+            return auth_result
+
+        devices = None
         try:
             devices = await self.hass.async_add_executor_job(
                 getattr, self.api, "devices"
@@ -208,6 +295,46 @@ class IcloudFlowHandler(ConfigFlow, domain=DOMAIN):
             _LOGGER.error("No device found in the iCloud account: %s", self._username)
             self.api = None
             return self.async_abort(reason="no_device")
+        except (
+            IcloudFindMyAuthRequiredError,
+            PyiCloudAuthRequiredException,
+            PyiCloudFailedLoginException,
+            IcloudAppleAccountLockedError,
+        ) as error:
+            if isinstance(error, IcloudAppleAccountLockedError) or is_apple_account_locked(
+                error
+            ):
+                _LOGGER.error("Apple reported that the iCloud account is locked")
+                self.api = None
+                return self.async_abort(reason="apple_account_locked")
+            _LOGGER.warning(
+                "Find My initialization requires more authentication "
+                "(error=%s, trusted=%s, requires_2fa=%s, requires_2sa=%s)",
+                type(error).__name__,
+                self.api.is_trusted_session,
+                self.api.requires_2fa,
+                self.api.requires_2sa,
+            )
+            auth_result = await self._ensure_trusted_session(
+                "Find My authentication failure"
+            )
+            if auth_result is not None:
+                return auth_result
+            return self.async_abort(reason="find_my_auth_required")
+        finally:
+            # Constructing pyicloud's Find My manager starts a polling thread.
+            # This flow client is temporary; the reloaded config entry creates
+            # its own manager, so stop the flow-owned thread before returning.
+            if devices is not None:
+                await self.hass.async_add_executor_job(
+                    self._stop_find_my_monitor, devices
+                )
+
+        # Find My can force a fresh authentication; verify trust again using
+        # the same client before saving credentials or completing reauth.
+        auth_result = await self._ensure_trusted_session("after Find My")
+        if auth_result is not None:
+            return auth_result
 
         data = {
             CONF_USERNAME: self._username,
@@ -223,8 +350,26 @@ class IcloudFlowHandler(ConfigFlow, domain=DOMAIN):
 
         entry = await self.async_set_unique_id(self.unique_id)
         self.hass.config_entries.async_update_entry(entry, data=data)
-        await self.hass.config_entries.async_reload(entry.entry_id)
+        loaded = await self.hass.config_entries.async_reload(entry.entry_id)
+        if not loaded:
+            _LOGGER.error(
+                "Apple reauthentication completed, but the iCloud config entry "
+                "did not load after reload (state=%s)",
+                entry.state,
+            )
+            return self.async_abort(reason="reauth_setup_failed")
         return self.async_abort(reason="reauth_successful")
+
+    @staticmethod
+    def _stop_find_my_monitor(devices: Any) -> None:
+        """Stop the Find My polling thread created only to validate a flow."""
+        stop_event = getattr(devices, "stop_event", None)
+        if stop_event is not None:
+            stop_event.set()
+
+        monitor = getattr(devices, "_monitor", None)
+        if monitor is not None and monitor.is_alive():
+            monitor.join(timeout=1)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -339,25 +484,49 @@ class IcloudFlowHandler(ConfigFlow, domain=DOMAIN):
             assert self.api is not None
 
         self._verification_code = user_input[CONF_VERIFICATION_CODE]
+        self.api.reset_trust_session_result()
 
         try:
             if self.api.requires_2fa:
-                if not await self.hass.async_add_executor_job(
+                code_valid = await self.hass.async_add_executor_job(
                     self.api.validate_2fa_code, self._verification_code
-                ):
-                    raise PyiCloudException("The code you entered is not valid.")  # noqa: TRY301
-            elif not await self.hass.async_add_executor_job(
-                self.api.validate_verification_code,
-                self._trusted_device,
-                self._verification_code,
-            ):
+                )
+            else:
+                code_valid = await self.hass.async_add_executor_job(
+                    self.api.validate_verification_code,
+                    self._trusted_device,
+                    self._verification_code,
+                )
+
+            if self.api.last_trust_session_result is False:
+                # pyicloud returns False both for a rejected code and for a
+                # code Apple accepted when its subsequent trust request failed.
+                # A valid cached token can still look trusted, so never finish
+                # reauth when this explicit trust operation failed.
+                _LOGGER.warning(
+                    "Apple accepted the verification code but did not trust "
+                    "the iCloud session; checking the resulting auth state"
+                )
+                auth_result = await self._ensure_trusted_session(
+                    "after verification code"
+                )
+                if auth_result is not None:
+                    return auth_result
+                return self.async_abort(reason="session_not_trusted")
+            if not code_valid:
                 raise PyiCloudException("The code you entered is not valid.")  # noqa: TRY301
         except PyiCloudException as error:
+            if is_apple_account_locked(error):
+                _LOGGER.error("Apple reported that the iCloud account is locked")
+                return self.async_abort(reason="apple_account_locked")
             # Redisplay the verification form after a failed verification attempt.
             # For 2FA, do not request a new Apple verification code on every bad
             # user entry. The original code may still be valid, and repeatedly
             # requesting new codes can invalidate prior codes or trigger rate limits.
-            _LOGGER.error("Failed to verify verification code: %s", error)
+            _LOGGER.error(
+                "Failed to verify verification code (error=%s)",
+                type(error).__name__,
+            )
             self._trusted_device = None
             self._verification_code = None
             errors["base"] = "validate_verification_code"
@@ -369,15 +538,7 @@ class IcloudFlowHandler(ConfigFlow, domain=DOMAIN):
 
             return await self.async_step_trusted_device(None, errors)
 
-        return await self.async_step_user(
-            {
-                CONF_USERNAME: self._username,
-                CONF_PASSWORD: self._password,
-                CONF_WITH_FAMILY: self._with_family,
-                CONF_MAX_INTERVAL: self._max_interval,
-                CONF_GPS_ACCURACY_THRESHOLD: self._gps_accuracy_threshold,
-            }
-        )
+        return await self._finish_authenticated_entry()
 
     async def _show_verification_code_form(
         self, errors: dict[str, str] | None = None

@@ -31,11 +31,14 @@ After entering the regular icloud account password, Home Assistant asks for an A
 
 
 
-This is an unofficial workaround based on the Home Assistant Core `icloud` integration with the following changes to explicitly request the verification code from Apple.:
+This is an unofficial workaround based on the Home Assistant Core `icloud` integration with the following changes:
 
-- Uses `pyicloud==2.5.0`
+- Uses `pyicloud==2.7.0`
 - Calls `request_2fa_code()` before showing the verification-code form
 - Avoids requesting a new Apple code on every failed code entry
+- Validates the saved session and uses Apple's advertised Find My one-factor login for Find My forced-auth retries
+- Stops after a failed Find My-specific login instead of silently falling back to account-wide SRP and another MFA cycle
+- Re-checks authentication after Find My initialization, which can trigger a forced refresh
 - Keeps the existing Apple iCloud integration behavior otherwise unchanged
 
 ## Installation
@@ -114,10 +117,18 @@ If Home Assistant asks you to sign in again after a restart:
    sharing logs.
 
    A cached session can still expire or stop being trusted by Apple even when
-   both files are present. In that case this integration logs that Apple
-   requires two-factor reauthentication; it does not necessarily mean the
-   password is wrong. The integration cannot keep using a session that Apple
-   has rejected.
+   both files are present. The current `pyicloud` version distinguishes a valid
+   token from a trusted browser and only reuses a cached session when Apple
+   reports it as trusted. If trust has actually been revoked, a fresh
+   verification may still be required; it does not necessarily mean the
+   password is wrong.
+
+When Find My requests a forced refresh, this custom integration validates the
+saved session and uses Apple's Find My one-factor path when Apple's current app
+data advertises it. If that targeted login is unavailable or fails, the flow
+stops rather than silently falling back to account-wide SRP and another MFA
+cycle. Sanitized logs record only authentication-state booleans and exception
+types, not account credentials or session tokens.
 
 #### No Apple Code Appears
 

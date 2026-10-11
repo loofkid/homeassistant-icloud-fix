@@ -1,14 +1,22 @@
 {
   "config": {
-    "abort": {
+        "abort": {
+            "apple_account_locked": "Apple a verrouillé ce compte Apple pour des raisons de sécurité. Déverrouillez-le sur iforgot.apple.com avant de réessayer.",
       "already_configured": "Le compte est déjà configuré",
+      "find_my_auth_required": "Apple exige toujours une authentification pour Localiser après la vérification de la session iCloud.",
       "no_device": "Aucun de vos appareils n’a « Localiser » activé",
-      "reauth_successful": "La réauthentification a réussi"
+      "reauth_successful": "La réauthentification a réussi",
+      "reauth_setup_failed": "Apple a terminé la vérification, mais Home Assistant n’a pas pu charger l’intégration iCloud. Consultez l’erreur de configuration dans Home Assistant avant de réessayer.",
+      "session_check_failed": "Impossible de confirmer la session iCloud auprès d’Apple. Réessayez.",
+      "session_not_trusted": "Apple n’a pas établi de session iCloud de confiance. Recommencez la configuration."
     },
-    "error": {
+        "error": {
+            "apple_account_locked": "Apple a verrouillé ce compte Apple pour des raisons de sécurité. Déverrouillez-le sur iforgot.apple.com avant de réessayer.",
       "invalid_auth": "Authentification invalide",
       "send_verification_code": "Échec de l’envoi du code de vérification",
-      "validate_verification_code": "Échec de la vérification du code de vérification, veuillez réessayer"
+      "validate_verification_code": "Échec de la vérification du code de vérification, veuillez réessayer",
+      "session_not_trusted": "Apple a accepté le code sans établir de session de confiance. Un nouveau code de vérification est nécessaire.",
+      "session_requires_2sa": "Apple exige toujours une vérification sur un appareil de confiance."
     },
     "step": {
       "reauth_confirm": {
@@ -16,7 +24,7 @@
           "password": "Mot de passe principal (MFA)",
           "username": "Adresse e-mail"
         },
-        "description": "Le mot de passe précédemment saisi pour {username} n’est plus valide. Mettez à jour votre mot de passe pour continuer à utiliser cette intégration.",
+                "description": "Apple exige une nouvelle connexion pour {username}. Terminez la vérification pour continuer à utiliser cette intégration. Si Apple a verrouillé le compte, déverrouillez-le auprès d’Apple avant de continuer.",
         "title": "Authentification expirée pour {name}"
       },
       "trusted_device": {
@@ -42,9 +50,27 @@
         "description": "Veuillez saisir le code de vérification que vous venez de recevoir d’Apple",
         "title": "Code du compte Apple"
       }
-    }
-  },
-  "services": {
+        }
+    },
+    "exceptions": {
+        "apple_account_locked": {
+            "message": "Apple a verrouillé ce compte Apple pour des raisons de sécurité. Déverrouillez-le sur iforgot.apple.com avant de réessayer. Home Assistant ne relancera pas automatiquement l’authentification."
+        },
+        "session_requires_reauth": {
+            "message": "Apple exige une vérification supplémentaire pour la session iCloud enregistrée. Reconfigurez Apple iCloud et terminez la vérification ; Home Assistant ne passera pas automatiquement à une connexion par mot de passe après ce défi de session."
+        }
+    },
+    "issues": {
+        "apple_account_locked": {
+            "title": "Compte Apple verrouillé",
+            "description": "Apple a signalé un verrouillage de sécurité pour ce compte. Déverrouillez-le sur [iforgot.apple.com](https://iforgot.apple.com), puis reconfigurez Apple iCloud dans Home Assistant. L’authentification ne sera pas relancée automatiquement."
+        },
+        "session_requires_reauth": {
+            "title": "La session Apple iCloud doit être vérifiée",
+            "description": "Apple n’a pas accepté la session enregistrée comme session de confiance. Reconfigurez Apple iCloud et terminez la vérification. Home Assistant ne passera pas automatiquement à une connexion par mot de passe après ce défi de session."
+        }
+    },
+    "services": {
     "display_message": {
       "description": "Affiche un message sur un appareil Apple.",
       "fields": {

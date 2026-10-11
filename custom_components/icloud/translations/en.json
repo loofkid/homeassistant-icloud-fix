@@ -1,14 +1,22 @@
 {
     "config": {
         "abort": {
+            "apple_account_locked": "Apple has locked this Apple Account for security reasons. Unlock it at iforgot.apple.com before trying again.",
             "already_configured": "Account is already configured",
+            "find_my_auth_required": "Apple still requires authentication for Find My after the iCloud session check.",
             "no_device": "None of your devices have \"Find My\" activated",
-            "reauth_successful": "Re-authentication was successful"
+            "reauth_successful": "Re-authentication was successful",
+            "reauth_setup_failed": "Apple verification completed, but Home Assistant could not load the iCloud integration. Check the integration setup error in Home Assistant before trying again.",
+            "session_check_failed": "Could not confirm the iCloud session with Apple. Try again.",
+            "session_not_trusted": "Apple did not establish a trusted iCloud session. Start setup again."
         },
         "error": {
+            "apple_account_locked": "Apple has locked this Apple Account for security reasons. Unlock it at iforgot.apple.com before trying again.",
             "invalid_auth": "Invalid authentication",
             "send_verification_code": "Failed to send verification code",
-            "validate_verification_code": "Failed to verify your verification code, try again"
+            "validate_verification_code": "Failed to verify your verification code, try again",
+            "session_not_trusted": "Apple accepted the code but did not establish a trusted session. A new verification code is required.",
+            "session_requires_2sa": "Apple still requires verification with a trusted device."
         },
         "step": {
             "reauth_confirm": {
@@ -16,7 +24,7 @@
                     "password": "Main password (MFA)",
                     "username": "Email"
                 },
-                "description": "Your previously entered password for {username} is no longer working. Update your password to keep using this integration.",
+                "description": "Apple requires another sign-in for {username}. Complete verification to keep using this integration. If Apple has locked the account, unlock it with Apple before continuing.",
                 "title": "Authentication expired for {name}"
             },
             "trusted_device": {
@@ -42,6 +50,24 @@
                 "description": "Please enter the verification code you just received from Apple",
                 "title": "Apple Account code"
             }
+        }
+    },
+    "exceptions": {
+        "apple_account_locked": {
+            "message": "Apple has locked this Apple Account for security reasons. Unlock it at iforgot.apple.com before trying again. Home Assistant will not retry authentication automatically."
+        },
+        "session_requires_reauth": {
+            "message": "Apple requires additional verification for the saved iCloud session. Reconfigure Apple iCloud and complete verification; Home Assistant will not fall back to a password login after this cached-session challenge."
+        }
+    },
+    "issues": {
+        "apple_account_locked": {
+            "title": "Apple Account locked",
+            "description": "Apple reported a security lock for this account. Unlock it at [iforgot.apple.com](https://iforgot.apple.com), then reconfigure Apple iCloud in Home Assistant. Authentication will not be retried automatically."
+        },
+        "session_requires_reauth": {
+            "title": "Apple iCloud session needs verification",
+            "description": "Apple did not accept the saved session as trusted. Reconfigure Apple iCloud and complete verification. Home Assistant will not fall back to a password login after this cached-session challenge."
         }
     },
     "services": {
