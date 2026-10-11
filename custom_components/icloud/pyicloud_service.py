@@ -203,10 +203,11 @@ class IcloudPyiCloudService(PyiCloudService):
             return
 
         if force_refresh and service is None:
-            # pyicloud 2.7.0's Find My manager retries an auth-required
-            # response with authenticate(force_refresh=True), without a
-            # service. Keep that retry on the guarded Find My path instead of
-            # falling through to account-wide SRP authentication.
+            # pyicloud 2.7.0 calls authenticate(force_refresh=True) without a
+            # service after Find My returns HTTP 450. That status requires a
+            # full account sign-in; preserve pyicloud's account-wide path so a
+            # config flow can surface Apple's HSA2 challenge. Startup clients
+            # retain their guard against cached-token HSA2 fallback.
             status = self._last_find_my_auth_status
             self._last_find_my_auth_status = None
             _LOGGER.warning(
@@ -214,7 +215,11 @@ class IcloudPyiCloudService(PyiCloudService):
                 "(Find My status=%s)",
                 status if status is not None else "unknown",
             )
-            self._authenticate_find_my()
+            super().authenticate(
+                force_refresh=force_refresh,
+                service=service,
+                pause_2fa=pause_2fa,
+            )
             return
 
         super().authenticate(
