@@ -107,10 +107,6 @@ class IcloudAccount:
                 accept_terms=True,
             )
 
-            if self.api.requires_2fa:
-                # Trigger a new log in to ensure the user enters the 2FA code again.
-                raise PyiCloudFailedLoginException("2FA Required")  # noqa: TRY301
-
         except PyiCloudFailedLoginException:
             self.api = None
             # Login failed which means credentials need to be updated.
@@ -123,6 +119,21 @@ class IcloudAccount:
                 self._config_entry.data[CONF_USERNAME],
             )
 
+            self._require_reauth()
+            return
+
+        if self.api.requires_2fa:
+            # Apple did not accept this session as trusted. This is distinct
+            # from a rejected password, even though both paths need reauth.
+            _LOGGER.warning(
+                (
+                    "Apple is requiring two-factor authentication for the "
+                    "iCloud session. A saved session can still be expired or "
+                    "untrusted; this does not necessarily mean the password "
+                    "is wrong. Reauthenticate the Apple iCloud integration."
+                )
+            )
+            self.api = None
             self._require_reauth()
             return
 

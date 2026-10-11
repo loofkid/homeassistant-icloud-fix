@@ -91,14 +91,44 @@ Then reconfigure or reauthenticate the integration and you should now receive an
 
 ## Troubleshooting
 
+#### Asked to sign in again after every Home Assistant restart
+
+After a successful login, `pyicloud` stores the Apple session and cookies in
+`/config/.storage/icloud/` as account-specific `.session` and `.cookiejar`
+files. Those files are what allow authentication to survive a Home Assistant
+restart. Keep that directory persistent and writable; do not remove or rename it
+as part of normal restarts.
+
+If Home Assistant asks you to sign in again after a restart:
+
+1. Check that the `.session` and `.cookiejar` files still exist under
+   `/config/.storage/icloud/` after the restart. File names are derived from the
+   Apple Account address; do not share the file names, directory listing, files,
+   or their contents.
+2. If they disappeared, check that Home Assistant's `/config` (including
+   `.storage`) is on the same persistent storage across restarts. For Container
+   installs, verify the `/config` volume mapping.
+3. If the files remain, check the Home Assistant logs for `pyicloud` and
+   `custom_components.icloud` messages during startup. Redact account
+   identifiers, passwords, verification codes, cookies, and tokens before
+   sharing logs.
+
+   A cached session can still expire or stop being trusted by Apple even when
+   both files are present. In that case this integration logs that Apple
+   requires two-factor reauthentication; it does not necessarily mean the
+   password is wrong. The integration cannot keep using a session that Apple
+   has rejected.
+
 #### No Apple Code Appears
 
-If no Apple verification code appears even after installing this custom component, remove the old iCloud session cache and restart Home Assistant:
+If no Apple verification code appears even after installing this custom component, you can reset the old iCloud session cache and restart Home Assistant:
 
 ```bash
 mv /config/.storage/icloud /config/.storage/icloud.backup
 ```
 
+This intentionally clears the cached Apple session and will require a fresh
+sign-in. Use it only as a one-time troubleshooting step, not after every restart.
 Then restart Home Assistant and try to authenticate again.
 
 #### Invalid Password
