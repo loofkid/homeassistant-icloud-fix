@@ -198,15 +198,15 @@ class IcloudPyiCloudService(PyiCloudService):
         pause_2fa: bool | None = None,
     ) -> None:
         """Keep Find My-only login separate from account-wide auth."""
-        # A 450 Find My response requires full account authentication; 421/500
-        # are not converted to PyiCloudAuthRequiredException in pyicloud 2.7.0.
-        # Its Find My manager retries 450 with an unscoped forced refresh, so
-        # preserve that account-wide flow rather than substituting one-factor.
         if service == "find":
             self._authenticate_find_my()
             return
 
         if force_refresh and service is None:
+            # pyicloud 2.7.0's Find My manager retries an auth-required
+            # response with authenticate(force_refresh=True), without a
+            # service. Keep that retry on the guarded Find My path instead of
+            # falling through to account-wide SRP authentication.
             status = self._last_find_my_auth_status
             self._last_find_my_auth_status = None
             _LOGGER.warning(
@@ -214,6 +214,8 @@ class IcloudPyiCloudService(PyiCloudService):
                 "(Find My status=%s)",
                 status if status is not None else "unknown",
             )
+            self._authenticate_find_my()
+            return
 
         super().authenticate(
             force_refresh=force_refresh,
