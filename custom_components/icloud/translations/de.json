@@ -57,7 +57,7 @@
             "message": "Apple hat diesen Apple Account aus Sicherheitsgründen gesperrt. Entsperre ihn unter iforgot.apple.com, bevor du es erneut versuchst. Home Assistant wiederholt die Authentifizierung nicht automatisch."
         },
         "session_requires_reauth": {
-            "message": "Apple verlangt eine zusätzliche Bestätigung für die gespeicherte iCloud-Sitzung. Konfiguriere Apple iCloud neu und schließe die Bestätigung ab. Home Assistant wechselt nach dieser Sitzungssperre nicht automatisch zu einer Passwortanmeldung."
+            "message": "Apple verlangt eine erneute Anmeldung für diesen iCloud-Account. Schließe Anmeldung und Bestätigung in Home Assistant ab. Eine direkte HSA2-Anforderung der gespeicherten Sitzung löst beim Start keinen automatischen Passwort-/SRP-Wiederholungsversuch aus."
         }
     },
     "issues": {
@@ -66,8 +66,8 @@
             "description": "Apple hat den Account aus Sicherheitsgründen gesperrt. Entsperre ihn unter [iforgot.apple.com](https://iforgot.apple.com) und konfiguriere anschließend Apple iCloud in Home Assistant neu. Es wird nicht automatisch erneut versucht, sich anzumelden."
         },
         "session_requires_reauth": {
-            "title": "Apple-iCloud-Sitzung muss bestätigt werden",
-            "description": "Apple hat die gespeicherte Sitzung nicht als vertrauenswürdig akzeptiert. Konfiguriere Apple iCloud neu und schließe die Bestätigung ab. Home Assistant wechselt nach dieser Sitzungssperre nicht automatisch zu einer Passwortanmeldung."
+            "title": "Apple-iCloud-Account muss erneut angemeldet werden",
+            "description": "Apple verlangt eine Anmeldung durch den Benutzer. Schließe die erneute Anmeldung in Home Assistant ab. Eine direkte HSA2-Anforderung der gespeicherten Sitzung löst beim Start keinen automatischen Passwort-/SRP-Wiederholungsversuch aus."
         }
     },
     "services": {

@@ -57,7 +57,7 @@
             "message": "Apple a verrouillé ce compte Apple pour des raisons de sécurité. Déverrouillez-le sur iforgot.apple.com avant de réessayer. Home Assistant ne relancera pas automatiquement l’authentification."
         },
         "session_requires_reauth": {
-            "message": "Apple exige une vérification supplémentaire pour la session iCloud enregistrée. Reconfigurez Apple iCloud et terminez la vérification ; Home Assistant ne passera pas automatiquement à une connexion par mot de passe après ce défi de session."
+            "message": "Apple exige une nouvelle authentification de ce compte iCloud. Terminez la connexion et la vérification dans Home Assistant. Un défi HSA2 direct de la session enregistrée ne déclenchera pas de nouvelle tentative automatique par mot de passe/SRP au démarrage."
         }
     },
     "issues": {
@@ -66,8 +66,8 @@
             "description": "Apple a signalé un verrouillage de sécurité pour ce compte. Déverrouillez-le sur [iforgot.apple.com](https://iforgot.apple.com), puis reconfigurez Apple iCloud dans Home Assistant. L’authentification ne sera pas relancée automatiquement."
         },
         "session_requires_reauth": {
-            "title": "La session Apple iCloud doit être vérifiée",
-            "description": "Apple n’a pas accepté la session enregistrée comme session de confiance. Reconfigurez Apple iCloud et terminez la vérification. Home Assistant ne passera pas automatiquement à une connexion par mot de passe après ce défi de session."
+            "title": "Le compte Apple iCloud doit être réauthentifié",
+            "description": "Apple exige une connexion effectuée par l’utilisateur. Terminez la réauthentification dans Home Assistant. Un défi HSA2 direct de la session enregistrée ne déclenchera pas de nouvelle tentative automatique par mot de passe/SRP au démarrage."
         }
     },
     "services": {

@@ -9,8 +9,11 @@ from pyicloud.exceptions import (
     PyiCloudAuthRequiredException,
     PyiCloudException,
 )
+from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import Timeout as RequestsTimeout
 
 _LOGGER = logging.getLogger(__name__)
+_REQUEST_TIMEOUT: tuple[int, int] = (5, 15)
 
 
 class IcloudFindMyAuthRequiredError(PyiCloudException):
@@ -84,6 +87,20 @@ def _safe_apple_response_details(
     return status, None
 
 
+def is_transport_error(error: BaseException) -> bool:
+    """Return whether an exception chain contains a Requests transport error."""
+    current: BaseException | None = error
+    seen: set[int] = set()
+
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (RequestsConnectionError, RequestsTimeout)):
+            return True
+        current = current.__cause__ or current.__context__
+
+    return False
+
+
 class IcloudPyiCloudService(PyiCloudService):
     """Handle Find My's forced authentication without an SRP fallback."""
 
@@ -98,11 +115,31 @@ class IcloudPyiCloudService(PyiCloudService):
             suppress_srp_fallback_on_cached_hsa2
         )
         self._last_find_my_auth_status: int | None = None
+        self._request_timeout_installed = False
+        self._find_my_auth_capture_installed = False
         super().__init__(*args, **kwargs)
-        self._capture_find_my_auth_status()
+
+    def _install_request_timeout(self) -> None:
+        """Bound Requests calls on this pyicloud session, without global patches."""
+        if self._request_timeout_installed:
+            return
+
+        original_request = self.session.request
+
+        def request_with_timeout(*args: Any, **kwargs: Any) -> Any:
+            if kwargs.get("timeout") is None:
+                kwargs["timeout"] = _REQUEST_TIMEOUT
+            return original_request(*args, **kwargs)
+
+        # Requests' get/post methods dispatch through self.request. Keep the
+        # wrapper on this one session so other integrations are unaffected.
+        setattr(self.session, "request", request_with_timeout)
+        self._request_timeout_installed = True
 
     def _capture_find_my_auth_status(self) -> None:
         """Retain only the status code from pyicloud's Find My 421/450 retry."""
+        if self._find_my_auth_capture_installed:
+            return
         original_post = self.session.post
 
         def post(*args: Any, **kwargs: Any) -> Any:
@@ -117,6 +154,7 @@ class IcloudPyiCloudService(PyiCloudService):
                 raise
 
         self.session.post = post
+        self._find_my_auth_capture_installed = True
 
     @property
     def last_trust_session_result(self) -> bool | None:
@@ -198,16 +236,18 @@ class IcloudPyiCloudService(PyiCloudService):
         pause_2fa: bool | None = None,
     ) -> None:
         """Keep Find My-only login separate from account-wide auth."""
+        self._install_request_timeout()
+        self._capture_find_my_auth_status()
         if service == "find":
             self._authenticate_find_my()
             return
 
         if force_refresh and service is None:
             # pyicloud 2.7.0 calls authenticate(force_refresh=True) without a
-            # service after Find My returns HTTP 450. That status requires a
-            # full account sign-in; preserve pyicloud's account-wide path so a
-            # config flow can surface Apple's HSA2 challenge. Startup clients
-            # retain their guard against cached-token HSA2 fallback.
+            # service after Find My returns HTTP 450. Preserve pyicloud's
+            # account-wide refresh so an HSA2 challenge can be surfaced; the
+            # separate cached-token HSA2 guard still prevents a startup retry
+            # loop when no Find My 450 forced refresh is in progress.
             status = self._last_find_my_auth_status
             self._last_find_my_auth_status = None
             _LOGGER.warning(

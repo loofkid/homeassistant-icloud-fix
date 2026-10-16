@@ -57,7 +57,7 @@
             "message": "Apple has locked this Apple Account for security reasons. Unlock it at iforgot.apple.com before trying again. Home Assistant will not retry authentication automatically."
         },
         "session_requires_reauth": {
-            "message": "Apple requires additional verification for the saved iCloud session. Reconfigure Apple iCloud and complete verification; Home Assistant will not fall back to a password login after this cached-session challenge."
+            "message": "Apple requires the user to reauthenticate this iCloud account. Complete sign-in and verification in Home Assistant. A direct HSA2 challenge from the cached session will not trigger an automatic password/SRP retry during startup."
         }
     },
     "issues": {
@@ -66,8 +66,8 @@
             "description": "Apple reported a security lock for this account. Unlock it at [iforgot.apple.com](https://iforgot.apple.com), then reconfigure Apple iCloud in Home Assistant. Authentication will not be retried automatically."
         },
         "session_requires_reauth": {
-            "title": "Apple iCloud session needs verification",
-            "description": "Apple did not accept the saved session as trusted. Reconfigure Apple iCloud and complete verification. Home Assistant will not fall back to a password login after this cached-session challenge."
+            "title": "Apple iCloud account needs reauthentication",
+            "description": "Apple required a user-driven sign-in for this iCloud account. Complete reauthentication in Home Assistant. A direct HSA2 challenge from the cached session will not trigger an automatic password/SRP retry during startup."
         }
     },
     "services": {

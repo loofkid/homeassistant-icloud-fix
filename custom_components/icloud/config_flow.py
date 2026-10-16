@@ -7,11 +7,13 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from pyicloud.exceptions import (
+    PyiCloudAPIResponseException,
     PyiCloudAuthRequiredException,
     PyiCloudException,
     PyiCloudFailedLoginException,
     PyiCloudNoDevicesException,
     PyiCloudServiceNotActivatedException,
+    PyiCloudServiceUnavailable,
 )
 import voluptuous as vol
 
@@ -35,6 +37,7 @@ from .pyicloud_service import (
     IcloudFindMyAuthRequiredError,
     IcloudPyiCloudService,
     is_apple_account_locked,
+    is_transport_error,
 )
 
 CONF_TRUSTED_DEVICE = "trusted_device"
@@ -202,6 +205,13 @@ class IcloudFlowHandler(ConfigFlow, domain=DOMAIN):
             return self._show_setup_form(
                 user_input, {"base": "apple_account_locked"}, step_id
             )
+        except (IcloudFindMyAuthRequiredError, PyiCloudAuthRequiredException) as error:
+            _LOGGER.warning(
+                "Could not initialize the iCloud session (%s)",
+                type(error).__name__,
+            )
+            self.api = None
+            return self.async_abort(reason="session_check_failed")
         except PyiCloudFailedLoginException as error:
             if is_apple_account_locked(error):
                 _LOGGER.error("Apple reported that the iCloud account is locked")
@@ -209,6 +219,13 @@ class IcloudFlowHandler(ConfigFlow, domain=DOMAIN):
                 return self._show_setup_form(
                     user_input, {"base": "apple_account_locked"}, step_id
                 )
+            if is_transport_error(error):
+                _LOGGER.warning(
+                    "Apple iCloud connection failed during sign-in (%s)",
+                    type(error).__name__,
+                )
+                self.api = None
+                return self.async_abort(reason="session_check_failed")
             _LOGGER.error(
                 "Error logging into iCloud service (error=%s)",
                 type(error).__name__,
@@ -216,6 +233,20 @@ class IcloudFlowHandler(ConfigFlow, domain=DOMAIN):
             self.api = None
             errors = {CONF_PASSWORD: "invalid_auth"}
             return self._show_setup_form(user_input, errors, step_id)
+        except PyiCloudServiceUnavailable as error:
+            _LOGGER.warning(
+                "Apple iCloud service is temporarily unavailable (%s)",
+                type(error).__name__,
+            )
+            self.api = None
+            return self.async_abort(reason="session_check_failed")
+        except PyiCloudAPIResponseException as error:
+            _LOGGER.warning(
+                "Could not initialize the iCloud session (%s)",
+                type(error).__name__,
+            )
+            self.api = None
+            return self.async_abort(reason="session_check_failed")
 
         if self.api.requires_2fa:
             self._2fa_code_requested = False
@@ -291,10 +322,27 @@ class IcloudFlowHandler(ConfigFlow, domain=DOMAIN):
             )
             if not devices:
                 raise PyiCloudNoDevicesException  # noqa: TRY301
-        except (PyiCloudServiceNotActivatedException, PyiCloudNoDevicesException):
+        except (
+            PyiCloudServiceNotActivatedException,
+            PyiCloudNoDevicesException,
+        ):
             _LOGGER.error("No device found in the iCloud account: %s", self._username)
             self.api = None
             return self.async_abort(reason="no_device")
+        except PyiCloudServiceUnavailable as error:
+            _LOGGER.warning(
+                "Apple iCloud service is temporarily unavailable (%s)",
+                type(error).__name__,
+            )
+            self.api = None
+            return self.async_abort(reason="session_check_failed")
+        except PyiCloudAPIResponseException as error:
+            _LOGGER.warning(
+                "Could not initialize iCloud Find My devices (%s)",
+                type(error).__name__,
+            )
+            self.api = None
+            return self.async_abort(reason="session_check_failed")
         except (
             IcloudFindMyAuthRequiredError,
             PyiCloudAuthRequiredException,
@@ -307,6 +355,13 @@ class IcloudFlowHandler(ConfigFlow, domain=DOMAIN):
                 _LOGGER.error("Apple reported that the iCloud account is locked")
                 self.api = None
                 return self.async_abort(reason="apple_account_locked")
+            if is_transport_error(error):
+                _LOGGER.warning(
+                    "Apple iCloud connection failed while initializing Find My (%s)",
+                    type(error).__name__,
+                )
+                self.api = None
+                return self.async_abort(reason="session_check_failed")
             _LOGGER.warning(
                 "Find My initialization requires more authentication "
                 "(error=%s, trusted=%s, requires_2fa=%s, requires_2sa=%s)",

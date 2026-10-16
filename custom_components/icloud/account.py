@@ -7,6 +7,7 @@ import operator
 from typing import Any
 
 from pyicloud.exceptions import (
+    PyiCloudAPIResponseException,
     PyiCloudAuthRequiredException,
     PyiCloudFailedLoginException,
     PyiCloudNoDevicesException,
@@ -14,10 +15,8 @@ from pyicloud.exceptions import (
     PyiCloudServiceUnavailable,
 )
 from pyicloud.services.findmyiphone import AppleDevice
-
 from homeassistant.components.zone import async_active_zone
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_USERNAME
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.dispatcher import dispatcher_send
@@ -60,6 +59,7 @@ from .pyicloud_service import (
     IcloudFindMyAuthRequiredError,
     IcloudPyiCloudService,
     is_apple_account_locked,
+    is_transport_error,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -132,14 +132,44 @@ class IcloudAccount:
                 "automatic authentication will not be retried"
             )
             return
-        except IcloudFindMyAuthRequiredError:
+        except (IcloudFindMyAuthRequiredError, PyiCloudAuthRequiredException) as error:
             self.api = None
+            if is_transport_error(error):
+                _LOGGER.warning(
+                    "Apple iCloud connection failed during startup (%s); "
+                    "Home Assistant will retry",
+                    type(error).__name__,
+                )
+                raise ConfigEntryNotReady("Unable to contact Apple iCloud") from error
             self.startup_issue = "session_requires_reauth"
             _LOGGER.warning(
                 "Apple requires additional authentication for the cached "
                 "iCloud session; automatic password fallback was suppressed"
             )
             return
+        except PyiCloudServiceNotActivatedException as error:
+            _LOGGER.error("No iCloud device found")
+            raise ConfigEntryNotReady from error
+        except PyiCloudServiceUnavailable as error:
+            _LOGGER.warning("Apple iCloud service is temporarily unavailable")
+            raise ConfigEntryNotReady from error
+        except PyiCloudAPIResponseException as error:
+            if is_apple_account_locked(error):
+                self.api = None
+                self.startup_issue = "apple_account_locked"
+                _LOGGER.error(
+                    "Apple reported that this iCloud account is locked; "
+                    "automatic authentication will not be retried"
+                )
+                return
+            if is_transport_error(error):
+                _LOGGER.warning(
+                    "Apple iCloud connection failed during startup (%s); "
+                    "Home Assistant will retry",
+                    type(error).__name__,
+                )
+                raise ConfigEntryNotReady("Unable to contact Apple iCloud") from error
+            raise
         except PyiCloudFailedLoginException as error:
             self.api = None
             if is_apple_account_locked(error):
@@ -149,17 +179,22 @@ class IcloudAccount:
                     "automatic authentication will not be retried"
                 )
                 return
-            # Login failed which means credentials need to be updated.
-            _LOGGER.error(
-                (
-                    "Your password for '%s' is no longer working; Go to the "
-                    "Integrations menu and click on Configure on the discovered Apple "
-                    "iCloud card to login again"
-                ),
-                self._config_entry.data[CONF_USERNAME],
+            if is_transport_error(error):
+                _LOGGER.warning(
+                    "Apple iCloud connection failed during startup (%s); "
+                    "Home Assistant will retry",
+                    type(error).__name__,
+                )
+                raise ConfigEntryNotReady("Unable to contact Apple iCloud") from error
+            # A rejected password needs a user-driven reauthentication; signal
+            # it to async_setup_entry instead of scheduling a flow from this
+            # executor thread and continuing setup with no API client.
+            _LOGGER.warning(
+                "iCloud authentication failed (%s); user-driven "
+                "reauthentication is required",
+                type(error).__name__,
             )
-
-            self._require_reauth()
+            self.startup_issue = "session_requires_reauth"
             return
 
         _LOGGER.info(
@@ -188,7 +223,7 @@ class IcloudAccount:
                 self.api.requires_2sa,
             )
             self.api = None
-            self._require_reauth()
+            self.startup_issue = "session_requires_reauth"
             return
 
         auth_state_before_device_fetch = (
@@ -209,6 +244,13 @@ class IcloudAccount:
             )
             return
         except (IcloudFindMyAuthRequiredError, PyiCloudAuthRequiredException) as err:
+            if is_transport_error(err):
+                _LOGGER.warning(
+                    "Apple iCloud connection failed while loading devices (%s); "
+                    "Home Assistant will retry",
+                    type(err).__name__,
+                )
+                raise ConfigEntryNotReady("Unable to contact Apple iCloud") from err
             _LOGGER.warning(
                 "Find My authentication requires a user-driven "
                 "reauthentication (%s); automatic fallback was suppressed",
@@ -217,6 +259,30 @@ class IcloudAccount:
             self.api = None
             self.startup_issue = "session_requires_reauth"
             return
+        except (
+            PyiCloudServiceNotActivatedException,
+            PyiCloudNoDevicesException,
+            PyiCloudServiceUnavailable,
+        ) as err:
+            _LOGGER.error("No iCloud device found")
+            raise ConfigEntryNotReady from err
+        except PyiCloudAPIResponseException as err:
+            if is_apple_account_locked(err):
+                self.api = None
+                self.startup_issue = "apple_account_locked"
+                _LOGGER.error(
+                    "Apple reported that this iCloud account is locked; "
+                    "automatic authentication will not be retried"
+                )
+                return
+            if is_transport_error(err):
+                _LOGGER.warning(
+                    "Apple iCloud connection failed while loading devices (%s); "
+                    "Home Assistant will retry",
+                    type(err).__name__,
+                )
+                raise ConfigEntryNotReady("Unable to contact Apple iCloud") from err
+            raise
         except PyiCloudFailedLoginException as err:
             self.api = None
             if is_apple_account_locked(err):
@@ -225,6 +291,13 @@ class IcloudAccount:
                     "Apple reported that this iCloud account is locked; "
                     "automatic authentication will not be retried"
                 )
+            elif is_transport_error(err):
+                _LOGGER.warning(
+                    "Apple iCloud connection failed while loading devices (%s); "
+                    "Home Assistant will retry",
+                    type(err).__name__,
+                )
+                raise ConfigEntryNotReady("Unable to contact Apple iCloud") from err
             else:
                 self.startup_issue = "session_requires_reauth"
                 _LOGGER.warning(
@@ -233,14 +306,6 @@ class IcloudAccount:
                     type(err).__name__,
                 )
             return
-        except (
-            PyiCloudServiceNotActivatedException,
-            PyiCloudNoDevicesException,
-            PyiCloudServiceUnavailable,
-        ) as err:
-            _LOGGER.error("No iCloud device found")
-            raise ConfigEntryNotReady from err
-
         if user_info is None:
             raise ConfigEntryNotReady("No user info found in iCloud devices response")
 
@@ -255,7 +320,8 @@ class IcloudAccount:
                 self.api.requires_2fa,
                 self.api.requires_2sa,
             )
-            self._require_reauth()
+            self.api = None
+            self.startup_issue = "session_requires_reauth"
             return
 
         self._owner_fullname = (

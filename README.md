@@ -38,6 +38,9 @@ This is an unofficial workaround based on the Home Assistant Core `icloud` integ
 - Avoids requesting a new Apple code on every failed code entry
 - Validates the saved session and uses Apple's advertised Find My one-factor login for Find My forced-auth retries
 - Stops after a failed Find My-specific login instead of silently falling back to account-wide SRP and another MFA cycle
+- Preserves pyicloud's account-wide forced-refresh behavior for Find My HTTP 450 while avoiding cached-token HSA2 retry loops at startup
+- Bounds pyicloud HTTP calls so a stalled Apple request cannot hold Home Assistant startup until its bootstrap timeout
+- Routes startup authentication failures through Home Assistant's reauthentication flow instead of completing setup without an API client
 - Re-checks authentication after Find My initialization, which can trigger a forced refresh
 - Keeps the existing Apple iCloud integration behavior otherwise unchanged
 
@@ -126,9 +129,14 @@ If Home Assistant asks you to sign in again after a restart:
 When Find My requests a forced refresh, this custom integration validates the
 saved session and uses Apple's Find My one-factor path when Apple's current app
 data advertises it. If that targeted login is unavailable or fails, the flow
-stops rather than silently falling back to account-wide SRP and another MFA
-cycle. Sanitized logs record only authentication-state booleans and exception
-types, not account credentials or session tokens.
+stops rather than silently falling back to account-wide SRP on that targeted
+path. HTTP 450 remains pyicloud's account-wide forced-refresh path. If a cached
+session needs HSA2 or the forced refresh still requires user action, startup
+returns through Home Assistant's reauthentication flow. Apple HTTP calls have
+bounded connect/read timeouts, and temporary network failures are reported to
+Home Assistant for retry instead of blocking the integration setup task.
+Sanitized logs record only authentication-state booleans and exception types,
+not account credentials or session tokens.
 
 #### No Apple Code Appears
 
